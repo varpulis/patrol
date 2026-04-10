@@ -20,10 +20,16 @@ patrol 'error -> error -> error .within(30s)' app.log
 ## Install
 
 ```bash
+curl -sSf https://raw.githubusercontent.com/varpulis/patrol/main/install.sh | sh
+```
+
+Or via Cargo:
+
+```bash
 cargo install patrol
 ```
 
-Or download a prebuilt binary from [Releases](https://github.com/varpulis/patrol/releases).
+Prebuilt binaries for Linux, macOS, and Windows are available on the [Releases](https://github.com/varpulis/patrol/releases) page.
 
 ## Quick Examples
 
