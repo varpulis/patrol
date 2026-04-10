@@ -1,0 +1,19 @@
+[package]
+name = "patrol"
+version = "0.1.0"
+edition = "2021"
+description = "Temporal grep — find multi-step patterns in log files and event streams"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/varpulis/patrol"
+keywords = ["grep", "pattern", "logs", "temporal", "sequence"]
+categories = ["command-line-utilities", "text-processing"]
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"        # optimize for size
+lto = true             # link-time optimization
+codegen-units = 1      # better LTO
+panic = "abort"        # smaller panic handler
+strip = true           # strip debug symbols
