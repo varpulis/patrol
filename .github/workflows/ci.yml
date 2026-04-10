@@ -7,13 +7,16 @@ on:
 
 jobs:
   test:
-    name: Test
+    name: Test + Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --all-targets -- -D warnings
 
   format:
     name: Format
@@ -25,16 +28,27 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  size:
-    name: Binary size
+  audit:
+    name: Security Audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  size:
+    name: Binary Size Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
       - name: Check binary size < 1MB
         run: |
-          SIZE=$(stat -f%z target/release/patrol 2>/dev/null || stat -c%s target/release/patrol)
+          SIZE=$(stat -c%s target/release/patrol 2>/dev/null || stat -f%z target/release/patrol)
           echo "Binary size: $SIZE bytes ($(( SIZE / 1024 )) KB)"
           if [ "$SIZE" -gt 1048576 ]; then
             echo "ERROR: Binary exceeds 1MB limit!"

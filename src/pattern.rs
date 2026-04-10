@@ -23,6 +23,7 @@ pub struct PatternStep {
     pub alias: Option<String>,
     pub comparisons: Vec<Comparison>,
     pub monotonic: Option<Monotonic>,
+    #[allow(dead_code)]
     pub negated: bool,
 }
 
@@ -143,9 +144,7 @@ fn parse_step(input: &str) -> Result<PatternStep, String> {
     let (event_type, comparisons) = if let Some(bracket_pos) = remaining.find('[') {
         let event_type = remaining[..bracket_pos].trim().to_string();
         let pred_str = &remaining[bracket_pos + 1..];
-        let end = pred_str
-            .find(']')
-            .ok_or("unclosed bracket in predicate")?;
+        let end = pred_str.find(']').ok_or("unclosed bracket in predicate")?;
         let pred_inner = &pred_str[..end];
         let comparisons = parse_comparisons(pred_inner)?;
         (event_type, comparisons)
@@ -173,10 +172,7 @@ fn parse_comparisons(input: &str) -> Result<Vec<Comparison>, String> {
     let mut comparisons = Vec::new();
 
     // Split on " and " or " && "
-    let parts: Vec<&str> = input
-        .split(" and ")
-        .flat_map(|s| s.split(" && "))
-        .collect();
+    let parts: Vec<&str> = input.split(" and ").flat_map(|s| s.split(" && ")).collect();
 
     for part in parts {
         let part = part.trim();
@@ -194,7 +190,10 @@ fn parse_comparisons(input: &str) -> Result<Vec<Comparison>, String> {
                 let value_str = part[pos + op.len()..].trim();
 
                 // Check if RHS is a reference (alias.field)
-                if value_str.contains('.') && !value_str.starts_with('"') && !value_str.parse::<f64>().is_ok() {
+                if value_str.contains('.')
+                    && !value_str.starts_with('"')
+                    && value_str.parse::<f64>().is_err()
+                {
                     let ref_parts: Vec<&str> = value_str.splitn(2, '.').collect();
                     comparisons.push(Comparison {
                         field: field.to_string(),
@@ -290,8 +289,7 @@ mod tests {
 
     #[test]
     fn test_with_within_and_partition() {
-        let p =
-            parse("Login -> Transfer .within(5m) .partition_by(user_id)").unwrap();
+        let p = parse("Login -> Transfer .within(5m) .partition_by(user_id)").unwrap();
         assert_eq!(p.steps.len(), 2);
         assert_eq!(p.within, Some(Duration::from_secs(300)));
         assert_eq!(p.partition_by.as_deref(), Some("user_id"));

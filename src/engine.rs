@@ -49,7 +49,7 @@ impl Engine {
 
         if let Some(ref partition_field) = self.nfa.partition_by.clone() {
             let key = event
-                .get(&partition_field)
+                .get(partition_field)
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_default();
@@ -58,8 +58,8 @@ impl Engine {
             advance_runs(&self.nfa, runs, event, &mut completed);
 
             // For monotonic patterns, only one run per partition
-            let has_active = self.nfa.has_monotonic()
-                && runs.iter().any(|r| !is_timed_out(&self.nfa, r));
+            let has_active =
+                self.nfa.has_monotonic() && runs.iter().any(|r| !is_timed_out(&self.nfa, r));
 
             if !has_active {
                 if let Some(run) = try_start_run(&self.nfa, event) {
@@ -167,10 +167,9 @@ fn advance_run(nfa: &Nfa, run: &mut Run, event: &Event) -> Advance {
         let pred_ok = if let Some(ref pred) = next_state.predicate {
             if next_state.state_type == StateType::Kleene
                 && next_state.self_loop
-                && next_state
-                    .alias
-                    .as_ref()
-                    .is_some_and(|a| !run.captured.contains_key(a.as_str()) && predicate_references_alias(pred, a))
+                && next_state.alias.as_ref().is_some_and(|a| {
+                    !run.captured.contains_key(a.as_str()) && predicate_references_alias(pred, a)
+                })
             {
                 // First Kleene entry with self-ref: bind to previous event
                 if let Some(prev) = run.events.last() {

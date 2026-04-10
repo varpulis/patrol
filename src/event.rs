@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub struct Event {
     pub event_type: String,
     pub data: HashMap<String, serde_json::Value>,
+    #[allow(dead_code)]
     pub timestamp: Option<f64>,
 }
 
@@ -51,9 +52,13 @@ impl Event {
     ///
     /// If the line isn't JSON, treat the entire line as a single-field event
     /// with event_type = "_" and data = {"line": "<the line>"}.
+    #[allow(dead_code)]
     pub fn from_text_line(line: &str) -> Self {
         let mut data = HashMap::new();
-        data.insert("line".to_string(), serde_json::Value::String(line.to_string()));
+        data.insert(
+            "line".to_string(),
+            serde_json::Value::String(line.to_string()),
+        );
         Event {
             event_type: "_".to_string(),
             data,

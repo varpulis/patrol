@@ -75,12 +75,15 @@ fn is_syslog(line: &str) -> bool {
     ];
     if line.len() > 15 {
         let first3 = &line[..3];
-        if months.iter().any(|m| *m == first3) && line.as_bytes().get(3) == Some(&b' ') {
+        if months.contains(&first3) && line.as_bytes().get(3) == Some(&b' ') {
             return true;
         }
     }
     // Check for ISO 8601 syslog: "2026-04-11T..."
-    if line.len() > 20 && line.as_bytes().get(4) == Some(&b'-') && line.as_bytes().get(10) == Some(&b'T') {
+    if line.len() > 20
+        && line.as_bytes().get(4) == Some(&b'-')
+        && line.as_bytes().get(10) == Some(&b'T')
+    {
         return true;
     }
     false
@@ -121,7 +124,10 @@ fn parse_syslog_traditional(line: &str) -> Option<Event> {
         let after = &rest[bracket_pos + 1..];
         if let Some(close) = after.find(']') {
             let pid = &after[..close];
-            let msg_start = after[close + 1..].find(": ").map(|p| close + 1 + p + 2).unwrap_or(close + 2);
+            let msg_start = after[close + 1..]
+                .find(": ")
+                .map(|p| close + 1 + p + 2)
+                .unwrap_or(close + 2);
             let message = if msg_start < after.len() {
                 after[msg_start..].trim()
             } else {
@@ -142,13 +148,25 @@ fn parse_syslog_traditional(line: &str) -> Option<Event> {
     // Use program name as event_type
     let event_type = program.to_string();
     let mut data = std::collections::HashMap::new();
-    data.insert("timestamp".into(), serde_json::Value::String(timestamp_str.to_string()));
-    data.insert("hostname".into(), serde_json::Value::String(hostname.to_string()));
-    data.insert("program".into(), serde_json::Value::String(program.to_string()));
+    data.insert(
+        "timestamp".into(),
+        serde_json::Value::String(timestamp_str.to_string()),
+    );
+    data.insert(
+        "hostname".into(),
+        serde_json::Value::String(hostname.to_string()),
+    );
+    data.insert(
+        "program".into(),
+        serde_json::Value::String(program.to_string()),
+    );
     if let Some(pid) = pid {
         data.insert("pid".into(), serde_json::Value::String(pid.to_string()));
     }
-    data.insert("message".into(), serde_json::Value::String(message.to_string()));
+    data.insert(
+        "message".into(),
+        serde_json::Value::String(message.to_string()),
+    );
     data.insert("line".into(), serde_json::Value::String(line.to_string()));
 
     Some(Event {
@@ -172,7 +190,10 @@ fn parse_syslog_iso(line: &str) -> Option<Event> {
 
     // Reuse the traditional parser for the rest (hostname program[pid]: message)
     let mut ev = parse_syslog_traditional(&format!("Jan  1 00:00:00 {rest}"))?;
-    ev.data.insert("timestamp".into(), serde_json::Value::String(timestamp_str.to_string()));
+    ev.data.insert(
+        "timestamp".into(),
+        serde_json::Value::String(timestamp_str.to_string()),
+    );
     Some(ev)
 }
 
@@ -216,15 +237,18 @@ fn parse_logfmt(line: &str) -> Option<Event> {
         // Find value (quoted or unquoted)
         let value = if remaining.starts_with('"') {
             // Quoted value — find closing quote
-            let end = remaining[1..].find('"').map(|p| p + 2).unwrap_or(remaining.len());
+            let end = remaining[1..]
+                .find('"')
+                .map(|p| p + 2)
+                .unwrap_or(remaining.len());
             let val = &remaining[1..end - 1];
-            remaining = &remaining[end..].trim_start();
+            remaining = remaining[end..].trim_start();
             serde_json::Value::String(val.to_string())
         } else {
             // Unquoted — until next space
             let end = remaining.find(' ').unwrap_or(remaining.len());
             let val_str = &remaining[..end];
-            remaining = &remaining[end..].trim_start();
+            remaining = remaining[end..].trim_start();
 
             // Try to parse as number
             if let Ok(n) = val_str.parse::<i64>() {
@@ -271,10 +295,7 @@ fn is_apache_clf(line: &str) -> bool {
         return false;
     }
     // First char is digit (IP address) and line contains [date] and "METHOD
-    bytes[0].is_ascii_digit()
-        && line.contains('[')
-        && line.contains(']')
-        && line.contains('"')
+    bytes[0].is_ascii_digit() && line.contains('[') && line.contains(']') && line.contains('"')
 }
 
 fn parse_apache_clf(line: &str) -> Option<Event> {
@@ -298,10 +319,10 @@ fn parse_apache_clf(line: &str) -> Option<Event> {
     let rest = &rest[date_end + 2..]; // skip "] "
 
     // Extract "METHOD path HTTP/x.x"
-    let (method, path, status, size) = if rest.starts_with('"') {
-        let quote_end = rest[1..].find('"').map(|p| p + 1)?;
-        let request = &rest[1..quote_end];
-        let after = &rest[quote_end + 2..]; // skip '" '
+    let (method, path, status, size) = if let Some(inner) = rest.strip_prefix('"') {
+        let quote_end = inner.find('"')?;
+        let request = &inner[..quote_end];
+        let after = &inner[quote_end + 2..]; // skip '" '
 
         let req_parts: Vec<&str> = request.splitn(3, ' ').collect();
         let method = req_parts.first().copied().unwrap_or("-");
@@ -331,8 +352,14 @@ fn parse_apache_clf(line: &str) -> Option<Event> {
 
     data.insert("ip".into(), serde_json::Value::String(ip.to_string()));
     data.insert("user".into(), serde_json::Value::String(user.to_string()));
-    data.insert("timestamp".into(), serde_json::Value::String(date.to_string()));
-    data.insert("method".into(), serde_json::Value::String(method.to_string()));
+    data.insert(
+        "timestamp".into(),
+        serde_json::Value::String(date.to_string()),
+    );
+    data.insert(
+        "method".into(),
+        serde_json::Value::String(method.to_string()),
+    );
     data.insert("path".into(), serde_json::Value::String(path.to_string()));
     data.insert("status".into(), serde_json::json!(status_code));
     data.insert("size".into(), serde_json::Value::String(size.to_string()));
@@ -351,7 +378,10 @@ fn parse_apache_clf(line: &str) -> Option<Event> {
 
 fn parse_plain(line: &str) -> Event {
     let mut data = std::collections::HashMap::new();
-    data.insert("message".into(), serde_json::Value::String(line.to_string()));
+    data.insert(
+        "message".into(),
+        serde_json::Value::String(line.to_string()),
+    );
     data.insert("line".into(), serde_json::Value::String(line.to_string()));
     Event {
         event_type: "_".to_string(),
@@ -400,16 +430,24 @@ mod tests {
 
     #[test]
     fn test_parse_syslog() {
-        let ev = parse_syslog("Apr 11 10:23:45 myhost sshd[1234]: Failed password for alice from 10.0.0.1").unwrap();
+        let ev = parse_syslog(
+            "Apr 11 10:23:45 myhost sshd[1234]: Failed password for alice from 10.0.0.1",
+        )
+        .unwrap();
         assert_eq!(ev.event_type, "sshd");
         assert_eq!(ev.get("hostname").and_then(|v| v.as_str()), Some("myhost"));
         assert_eq!(ev.get("pid").and_then(|v| v.as_str()), Some("1234"));
-        assert!(ev.get("message").and_then(|v| v.as_str()).unwrap().contains("Failed password"));
+        assert!(ev
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .contains("Failed password"));
     }
 
     #[test]
     fn test_parse_logfmt() {
-        let ev = parse_logfmt("time=2026-04-11 level=error msg=\"disk full\" host=web1 code=500").unwrap();
+        let ev = parse_logfmt("time=2026-04-11 level=error msg=\"disk full\" host=web1 code=500")
+            .unwrap();
         assert_eq!(ev.event_type, "error");
         assert_eq!(ev.get("host").and_then(|v| v.as_str()), Some("web1"));
         assert_eq!(ev.get("code"), Some(&serde_json::json!(500)));
@@ -418,8 +456,9 @@ mod tests {
     #[test]
     fn test_parse_apache_clf() {
         let ev = parse_apache_clf(
-            r#"10.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /page HTTP/1.0" 200 2326"#
-        ).unwrap();
+            r#"10.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /page HTTP/1.0" 200 2326"#,
+        )
+        .unwrap();
         assert_eq!(ev.event_type, "request");
         assert_eq!(ev.get("ip").and_then(|v| v.as_str()), Some("10.0.0.1"));
         assert_eq!(ev.get("method").and_then(|v| v.as_str()), Some("GET"));
@@ -430,8 +469,9 @@ mod tests {
     #[test]
     fn test_parse_apache_500_is_error() {
         let ev = parse_apache_clf(
-            r#"10.0.0.1 - - [11/Apr/2026:10:23:45 +0000] "POST /api HTTP/1.1" 500 0"#
-        ).unwrap();
+            r#"10.0.0.1 - - [11/Apr/2026:10:23:45 +0000] "POST /api HTTP/1.1" 500 0"#,
+        )
+        .unwrap();
         assert_eq!(ev.event_type, "error");
     }
 }

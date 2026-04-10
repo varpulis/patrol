@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::event::Event;
-use crate::pattern::{Comparison, Monotonic, PatternStep};
+use crate::pattern::{Monotonic, PatternStep};
 
 // ============================================================================
 // NFA Types
@@ -214,7 +214,11 @@ fn build_predicate(step: &PatternStep) -> Option<Predicate> {
 
     // Monotonic operator generates self-referencing predicate
     if let Some(ref mono) = step.monotonic {
-        let alias = step.alias.as_deref().unwrap_or(&step.event_type).to_string();
+        let alias = step
+            .alias
+            .as_deref()
+            .unwrap_or(&step.event_type)
+            .to_string();
         let op = match mono {
             Monotonic::Increasing(f) => (f.clone(), CmpOp::Gt),
             Monotonic::Decreasing(f) => (f.clone(), CmpOp::Lt),
@@ -252,11 +256,7 @@ fn cmp_op_from(s: &str) -> CmpOp {
 // Predicate Evaluation
 // ============================================================================
 
-pub fn eval_predicate(
-    pred: &Predicate,
-    event: &Event,
-    captured: &HashMap<String, Event>,
-) -> bool {
+pub fn eval_predicate(pred: &Predicate, event: &Event, captured: &HashMap<String, Event>) -> bool {
     match pred {
         Predicate::Compare { field, op, value } => {
             if let Some(ev) = event.get(field) {
@@ -301,7 +301,10 @@ fn compare_json(left: &serde_json::Value, right: &serde_json::Value, op: CmpOp) 
         CmpOp::Eq => left == right,
         CmpOp::NotEq => left != right,
         CmpOp::Lt => ord == Some(std::cmp::Ordering::Less),
-        CmpOp::Le => matches!(ord, Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)),
+        CmpOp::Le => matches!(
+            ord,
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        ),
         CmpOp::Gt => ord == Some(std::cmp::Ordering::Greater),
         CmpOp::Ge => matches!(
             ord,

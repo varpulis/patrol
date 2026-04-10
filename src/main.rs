@@ -79,7 +79,7 @@ fn main() {
     };
 
     let mut stdout = io::stdout().lock();
-    let mut line_num: u64 = 0;
+    let mut _line_num: u64 = 0;
     let mut total_matches: u64 = 0;
     let mut total_events: u64 = 0;
 
@@ -91,7 +91,7 @@ fn main() {
             Ok(l) => l,
             Err(_) => continue,
         };
-        line_num += 1;
+        _line_num += 1;
 
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
@@ -192,13 +192,29 @@ fn main() {
 }
 
 fn atty_stdout() -> bool {
-    unsafe { libc_isatty(1) != 0 }
-}
-
-// Minimal isatty without pulling in a crate
-extern "C" {
-    #[link_name = "isatty"]
-    fn libc_isatty(fd: i32) -> i32;
+    #[cfg(unix)]
+    {
+        extern "C" {
+            fn isatty(fd: i32) -> i32;
+        }
+        unsafe { isatty(1) != 0 }
+    }
+    #[cfg(windows)]
+    {
+        extern "system" {
+            fn GetStdHandle(nStdHandle: u32) -> *mut std::ffi::c_void;
+            fn GetConsoleMode(hConsoleHandle: *mut std::ffi::c_void, lpMode: *mut u32) -> i32;
+        }
+        unsafe {
+            let handle = GetStdHandle(0xFFFF_FFF5); // STD_OUTPUT_HANDLE
+            let mut mode = 0u32;
+            GetConsoleMode(handle, &mut mode) != 0
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
 }
 
 fn print_usage() {
