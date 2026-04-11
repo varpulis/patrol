@@ -95,8 +95,7 @@ fn parse_syslog(line: &str) -> Option<Event> {
     // Dispatch by the separator at byte 10 so traditional never gets to slice
     // 15 bytes off an ISO timestamp and produce garbage hostnames.
     let bytes = line.as_bytes();
-    if bytes.len() > 10 && (bytes[10] == b'T' || bytes[10] == b' ') && bytes.get(4) == Some(&b'-')
-    {
+    if bytes.len() > 10 && (bytes[10] == b'T' || bytes[10] == b' ') && bytes.get(4) == Some(&b'-') {
         if let Some(ev) = parse_syslog_iso(line) {
             return Some(ev);
         }
@@ -111,7 +110,8 @@ fn parse_syslog(line: &str) -> Option<Event> {
 fn is_month_abbrev(b: &[u8]) -> bool {
     matches!(
         b,
-        b"Jan" | b"Feb"
+        b"Jan"
+            | b"Feb"
             | b"Mar"
             | b"Apr"
             | b"May"

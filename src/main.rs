@@ -73,25 +73,20 @@ fn parse_args() -> Result<Args, String> {
             }
             "-C" | "--context" => {
                 i += 1;
-                let n =
-                    parse_num(raw.get(i).ok_or("--context requires a count")?)?;
+                let n = parse_num(raw.get(i).ok_or("--context requires a count")?)?;
                 args.context_before = n;
                 args.context_after = n;
                 i += 1;
             }
             "-A" | "--after-context" => {
                 i += 1;
-                let n = parse_num(
-                    raw.get(i).ok_or("--after-context requires a count")?,
-                )?;
+                let n = parse_num(raw.get(i).ok_or("--after-context requires a count")?)?;
                 args.context_after = n;
                 i += 1;
             }
             "-B" | "--before-context" => {
                 i += 1;
-                let n = parse_num(
-                    raw.get(i).ok_or("--before-context requires a count")?,
-                )?;
+                let n = parse_num(raw.get(i).ok_or("--before-context requires a count")?)?;
                 args.context_before = n;
                 i += 1;
             }
@@ -196,14 +191,14 @@ fn main() {
     // Helper: process a logical record (text spanning [start..physical_line])
     // through the engine and queue resulting matches.
     let process_record = |raw: &str,
-                              start_line: u64,
-                              end_line: u64,
-                              detected_format: &mut Option<format::Format>,
-                              eng: &mut engine::Engine,
-                              total_events: &mut u64,
-                              total_matches: &mut u64,
-                              pending: &mut Vec<PendingMatch>,
-                              stdout: &mut io::StdoutLock|
+                          start_line: u64,
+                          end_line: u64,
+                          detected_format: &mut Option<format::Format>,
+                          eng: &mut engine::Engine,
+                          total_events: &mut u64,
+                          total_matches: &mut u64,
+                          pending: &mut Vec<PendingMatch>,
+                          stdout: &mut io::StdoutLock|
      -> io::Result<()> {
         let trimmed = raw.trim_end();
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
