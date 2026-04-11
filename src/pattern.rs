@@ -23,7 +23,6 @@ pub struct PatternStep {
     pub alias: Option<String>,
     pub comparisons: Vec<Comparison>,
     pub monotonic: Option<Monotonic>,
-    #[allow(dead_code)]
     pub negated: bool,
 }
 
@@ -180,8 +179,8 @@ fn parse_comparisons(input: &str) -> Result<Vec<Comparison>, String> {
             continue;
         }
 
-        // Find the comparison operator
-        let ops = ["==", "!=", "!~", "<=", ">=", "<", ">", "~"];
+        // Find the comparison operator (longest first to avoid prefix collisions)
+        let ops = ["!=~", "=~", "==", "!=", "!~", "<=", ">=", "<", ">", "~"];
         let mut found = false;
 
         for op in ops {
@@ -189,8 +188,12 @@ fn parse_comparisons(input: &str) -> Result<Vec<Comparison>, String> {
                 let field = part[..pos].trim();
                 let value_str = part[pos + op.len()..].trim();
 
+                // Regex ops always take a literal string pattern — never treat as a ref.
+                let is_regex = op == "=~" || op == "!=~";
+
                 // Check if RHS is a reference (alias.field)
-                if value_str.contains('.')
+                if !is_regex
+                    && value_str.contains('.')
                     && !value_str.starts_with('"')
                     && value_str.parse::<f64>().is_err()
                 {

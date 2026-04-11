@@ -2,12 +2,16 @@
 
 use std::collections::HashMap;
 
+use crate::timestamp;
+
 #[derive(Debug, Clone)]
 pub struct Event {
     pub event_type: String,
     pub data: HashMap<String, serde_json::Value>,
-    #[allow(dead_code)]
+    /// Event time as Unix epoch seconds (parsed from the log line). None if unavailable.
     pub timestamp: Option<f64>,
+    /// 1-based line number of the source record; 0 if unknown (e.g. tests).
+    pub line_num: u64,
 }
 
 impl Event {
@@ -35,16 +39,23 @@ impl Event {
             }
         }
 
-        let timestamp = obj
+        // Try timestamp / ts / time / @timestamp fields in that order.
+        let ts_value = obj
             .get("timestamp")
             .or_else(|| obj.get("ts"))
             .or_else(|| obj.get("time"))
-            .and_then(|v| v.as_f64());
+            .or_else(|| obj.get("@timestamp"));
+        let timestamp = ts_value.and_then(|v| match v {
+            serde_json::Value::Number(n) => n.as_f64().map(timestamp::from_number),
+            serde_json::Value::String(s) => timestamp::parse(s),
+            _ => None,
+        });
 
         Some(Event {
             event_type,
             data,
             timestamp,
+            line_num: 0,
         })
     }
 
@@ -63,6 +74,7 @@ impl Event {
             event_type: "_".to_string(),
             data,
             timestamp: None,
+            line_num: 0,
         }
     }
 

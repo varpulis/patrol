@@ -1,6 +1,6 @@
 [package]
 name = "patrol"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Temporal grep — find multi-step patterns in log files and event streams"
 license = "MIT OR Apache-2.0"
@@ -10,6 +10,7 @@ categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
 serde_json = "1"
+regex-lite = "0.1"
 
 [profile.release]
 opt-level = "z"        # optimize for size

@@ -1,10 +1,16 @@
 //! Patrol's SASE engine — manages NFA runs and produces matches.
+//!
+//! Windows are measured against **event time** when events carry a timestamp;
+//! otherwise the engine falls back to wall-clock time. This matters because
+//! log analysis replays historical data — the previous implementation used
+//! `Instant::now()` and silently rejected any run whose wall-clock duration
+//! exceeded the window, regardless of when the events actually happened.
 
 use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::event::Event;
-use crate::nfa::{eval_predicate, predicate_references_alias, Nfa, StateType};
+use crate::nfa::{eval_predicate, forbidden_matches, predicate_references_alias, Nfa, StateType};
 
 /// A single active run (partial match in progress)
 #[derive(Debug, Clone)]
@@ -12,7 +18,10 @@ struct Run {
     current_state: usize,
     captured: HashMap<String, Event>,
     events: Vec<Event>,
-    started_at: Instant,
+    /// Event time (Unix seconds) of the event that started this run.
+    started_event_time: Option<f64>,
+    /// Wall-clock start — only used as a fallback when events lack timestamps.
+    started_wall: Instant,
 }
 
 /// A completed match
@@ -46,6 +55,7 @@ impl Engine {
 
     pub fn process(&mut self, event: &Event) -> Vec<Match> {
         let mut completed = Vec::new();
+        let now = event.timestamp;
 
         if let Some(ref partition_field) = self.nfa.partition_by.clone() {
             let key = event
@@ -55,37 +65,146 @@ impl Engine {
                 .unwrap_or_default();
 
             let runs = self.partitioned_runs.entry(key.clone()).or_default();
-            advance_runs(&self.nfa, runs, event, &mut completed);
+            advance_runs(&self.nfa, runs, event, now, &mut completed);
 
             // For monotonic patterns, only one run per partition
             let has_active =
-                self.nfa.has_monotonic() && runs.iter().any(|r| !is_timed_out(&self.nfa, r));
+                self.nfa.has_monotonic() && runs.iter().any(|r| !is_timed_out(&self.nfa, r, now));
 
             if !has_active {
-                if let Some(run) = try_start_run(&self.nfa, event) {
-                    runs.push(run);
-                }
+                try_start_or_complete(&self.nfa, event, runs, &mut completed);
             }
         } else {
-            advance_runs(&self.nfa, &mut self.runs, event, &mut completed);
+            advance_runs(&self.nfa, &mut self.runs, event, now, &mut completed);
 
-            if let Some(run) = try_start_run(&self.nfa, event) {
-                self.runs.push(run);
+            // For monotonic patterns we want a single run; for everything else
+            // we allow overlapping runs so multiple concurrent matches can fire.
+            let suppress_new = self.nfa.has_monotonic() && !self.runs.is_empty();
+            if !suppress_new {
+                try_start_or_complete(&self.nfa, event, &mut self.runs, &mut completed);
             }
+        }
+
+        completed
+    }
+
+    /// Drain any runs that are still alive but should complete — specifically,
+    /// trailing-negation runs whose absence window has effectively expired.
+    /// Call this at end-of-input.
+    pub fn flush(&mut self) -> Vec<Match> {
+        let mut completed = Vec::new();
+        let states = &self.nfa.states;
+
+        self.runs.retain_mut(|run| {
+            if states[run.current_state].trailing_negation {
+                completed.push(Match {
+                    events: std::mem::take(&mut run.events),
+                    captured: std::mem::take(&mut run.captured),
+                });
+                false
+            } else {
+                true
+            }
+        });
+
+        for runs in self.partitioned_runs.values_mut() {
+            runs.retain_mut(|run| {
+                if states[run.current_state].trailing_negation {
+                    completed.push(Match {
+                        events: std::mem::take(&mut run.events),
+                        captured: std::mem::take(&mut run.captured),
+                    });
+                    false
+                } else {
+                    true
+                }
+            });
         }
 
         completed
     }
 }
 
-fn advance_runs(nfa: &Nfa, runs: &mut Vec<Run>, event: &Event, completed: &mut Vec<Match>) {
+/// Try to spawn a new run starting from this event. If the resulting run is
+/// already at a terminal state (single-step pattern / predicate filter), emit
+/// the completed match immediately rather than parking the run.
+fn try_start_or_complete(
+    nfa: &Nfa,
+    event: &Event,
+    runs: &mut Vec<Run>,
+    completed: &mut Vec<Match>,
+) {
+    if let Some(mut run) = try_start_run(nfa, event) {
+        let state = &nfa.states[run.current_state];
+        if is_terminal(nfa, state) {
+            completed.push(Match {
+                events: std::mem::take(&mut run.events),
+                captured: std::mem::take(&mut run.captured),
+            });
+        } else {
+            runs.push(run);
+        }
+    }
+}
+
+/// A state is "terminal" when it has a direct transition to Accept AND it is
+/// not a Kleene loop (which has additional accumulation semantics) AND it is
+/// not a trailing-negation state (which completes via timeout, not a transition).
+fn is_terminal(nfa: &Nfa, state: &crate::nfa::State) -> bool {
+    if state.state_type == StateType::Kleene || state.trailing_negation {
+        return false;
+    }
+    state
+        .transitions
+        .iter()
+        .any(|&id| nfa.states[id].state_type == StateType::Accept)
+}
+
+fn advance_runs(
+    nfa: &Nfa,
+    runs: &mut Vec<Run>,
+    event: &Event,
+    now_event_time: Option<f64>,
+    completed: &mut Vec<Match>,
+) {
     let mut i = 0;
     while i < runs.len() {
-        if is_timed_out(nfa, &runs[i]) {
+        // 1) Timeout check first. Trailing-negation runs that time out succeed
+        //    (absence confirmed); all others fail.
+        if is_timed_out(nfa, &runs[i], now_event_time) {
+            let state = &nfa.states[runs[i].current_state];
+            if state.trailing_negation {
+                completed.push(Match {
+                    events: std::mem::take(&mut runs[i].events),
+                    captured: std::mem::take(&mut runs[i].captured),
+                });
+            }
             runs.swap_remove(i);
             continue;
         }
 
+        // 2) Forbidden (negation) check. If the current event matches a forbidden
+        //    spec at this state, kill the run.
+        let state = &nfa.states[runs[i].current_state];
+        let mut killed = false;
+        for fb in &state.forbidden {
+            if forbidden_matches(fb, event, &runs[i].captured) {
+                killed = true;
+                break;
+            }
+        }
+        if killed {
+            runs.swap_remove(i);
+            continue;
+        }
+
+        // 3) Trailing-negation states don't advance on events — only time.
+        if state.trailing_negation {
+            i += 1;
+            continue;
+        }
+
+        // 4) Normal advancement.
         match advance_run(nfa, &mut runs[i], event) {
             Advance::Continue => i += 1,
             Advance::Complete(m) => {
@@ -204,6 +323,16 @@ fn advance_run(nfa: &Nfa, run: &mut Run, event: &Event) -> Advance {
                 });
             }
 
+            // Eagerly complete when the next state leads straight to Accept.
+            // Without this, runs at the final step of a pattern sit forever
+            // unless another event happens to arrive later.
+            if is_terminal(nfa, next_state) {
+                return Advance::Complete(Match {
+                    events: std::mem::take(&mut run.events),
+                    captured: std::mem::take(&mut run.captured),
+                });
+            }
+
             return Advance::Continue;
         }
     }
@@ -276,7 +405,8 @@ fn try_start_run(nfa: &Nfa, event: &Event) -> Option<Run> {
                 current_state: next_id,
                 captured: HashMap::new(),
                 events: vec![event.clone()],
-                started_at: Instant::now(),
+                started_event_time: event.timestamp,
+                started_wall: Instant::now(),
             };
             if let Some(ref alias) = next_state.alias {
                 run.captured.insert(alias.clone(), event.clone());
@@ -288,10 +418,15 @@ fn try_start_run(nfa: &Nfa, event: &Event) -> Option<Run> {
     None
 }
 
-fn is_timed_out(nfa: &Nfa, run: &Run) -> bool {
-    if let Some(within) = nfa.within {
-        run.started_at.elapsed() > within
-    } else {
-        false
+/// Has this run's window expired? Uses event time if both the run and the
+/// current event carry timestamps; otherwise falls back to wall clock.
+fn is_timed_out(nfa: &Nfa, run: &Run, now_event_time: Option<f64>) -> bool {
+    let within = match nfa.within {
+        Some(w) => w,
+        None => return false,
+    };
+    match (run.started_event_time, now_event_time) {
+        (Some(start), Some(now)) => (now - start) > within.as_secs_f64(),
+        _ => run.started_wall.elapsed() > within,
     }
 }

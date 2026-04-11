@@ -8,6 +8,7 @@
 //! 5. Plain text          (fallback — entire line as `message` field)
 
 use crate::event::Event;
+use crate::timestamp;
 
 /// Detected log format
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -90,16 +91,38 @@ fn is_syslog(line: &str) -> bool {
 }
 
 fn parse_syslog(line: &str) -> Option<Event> {
-    // Try traditional format: "Apr 11 10:23:45 hostname program[pid]: message"
-    if let Some(ev) = parse_syslog_traditional(line) {
-        return Some(ev);
+    // ISO lines (e.g. "2026-04-11T10:23:45Z host prog: msg") start with a year.
+    // Dispatch by the separator at byte 10 so traditional never gets to slice
+    // 15 bytes off an ISO timestamp and produce garbage hostnames.
+    let bytes = line.as_bytes();
+    if bytes.len() > 10 && (bytes[10] == b'T' || bytes[10] == b' ') && bytes.get(4) == Some(&b'-')
+    {
+        if let Some(ev) = parse_syslog_iso(line) {
+            return Some(ev);
+        }
     }
-    // Try ISO format: "2026-04-11T10:23:45.123Z hostname program[pid]: message"
-    if let Some(ev) = parse_syslog_iso(line) {
+    if let Some(ev) = parse_syslog_traditional(line) {
         return Some(ev);
     }
     // Fallback
     Some(parse_plain(line))
+}
+
+fn is_month_abbrev(b: &[u8]) -> bool {
+    matches!(
+        b,
+        b"Jan" | b"Feb"
+            | b"Mar"
+            | b"Apr"
+            | b"May"
+            | b"Jun"
+            | b"Jul"
+            | b"Aug"
+            | b"Sep"
+            | b"Oct"
+            | b"Nov"
+            | b"Dec"
+    )
 }
 
 fn parse_syslog_traditional(line: &str) -> Option<Event> {
@@ -107,6 +130,13 @@ fn parse_syslog_traditional(line: &str) -> Option<Event> {
     // Positions: timestamp=0..15, hostname after space, program/pid, message after ": "
 
     if line.len() < 16 {
+        return None;
+    }
+
+    // Reject anything that doesn't actually start with a month abbreviation —
+    // otherwise ISO lines like "2026-04-11T..." get sliced as 15-byte
+    // "timestamps" and the parser produces junk.
+    if !is_month_abbrev(&line.as_bytes()[..3]) {
         return None;
     }
 
@@ -169,10 +199,12 @@ fn parse_syslog_traditional(line: &str) -> Option<Event> {
     );
     data.insert("line".into(), serde_json::Value::String(line.to_string()));
 
+    let epoch = timestamp::parse(timestamp_str);
     Some(Event {
         event_type,
         data,
-        timestamp: None,
+        timestamp: epoch,
+        line_num: 0,
     })
 }
 
@@ -194,6 +226,7 @@ fn parse_syslog_iso(line: &str) -> Option<Event> {
         "timestamp".into(),
         serde_json::Value::String(timestamp_str.to_string()),
     );
+    ev.timestamp = timestamp::parse(timestamp_str);
     Some(ev)
 }
 
@@ -222,6 +255,7 @@ fn is_logfmt(line: &str) -> bool {
 fn parse_logfmt(line: &str) -> Option<Event> {
     let mut data = std::collections::HashMap::new();
     let mut event_type = "_".to_string();
+    let mut epoch: Option<f64> = None;
 
     // Parse key=value pairs
     let mut remaining = line.trim();
@@ -271,6 +305,15 @@ fn parse_logfmt(line: &str) -> Option<Event> {
             }
         }
 
+        // Extract timestamp from common keys (first one wins)
+        if epoch.is_none() && matches!(key, "time" | "ts" | "timestamp" | "t" | "@timestamp") {
+            epoch = match &value {
+                serde_json::Value::String(s) => timestamp::parse(s),
+                serde_json::Value::Number(n) => n.as_f64().map(timestamp::from_number),
+                _ => None,
+            };
+        }
+
         data.insert(key.to_string(), value);
     }
 
@@ -279,7 +322,8 @@ fn parse_logfmt(line: &str) -> Option<Event> {
     Some(Event {
         event_type,
         data,
-        timestamp: None,
+        timestamp: epoch,
+        line_num: 0,
     })
 }
 
@@ -365,10 +409,12 @@ fn parse_apache_clf(line: &str) -> Option<Event> {
     data.insert("size".into(), serde_json::Value::String(size.to_string()));
     data.insert("line".into(), serde_json::Value::String(line.to_string()));
 
+    let epoch = timestamp::parse(date);
     Some(Event {
         event_type: event_type.to_string(),
         data,
-        timestamp: None,
+        timestamp: epoch,
+        line_num: 0,
     })
 }
 
@@ -387,6 +433,7 @@ fn parse_plain(line: &str) -> Event {
         event_type: "_".to_string(),
         data,
         timestamp: None,
+        line_num: 0,
     }
 }
 
